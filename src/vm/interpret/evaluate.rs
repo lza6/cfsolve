@@ -13,6 +13,11 @@ use super::semantics;
 use crate::vm::output::Term;
 use crate::vm::value::{Scope, Value};
 
+/// Maximum nested function calls in one run. Recursive handlers never reach the statement
+/// budget or the loop cap, and every level clones its symbolic arguments, so the only way to
+/// stop them is a structural limit; deeper chains make the call unsupported.
+pub(crate) const MAXIMUM_CALL_DEPTH: usize = 256;
+
 impl<'ast> Run<'ast, '_> {
     /// Runs `statement` through a scoped plan.
     pub(super) fn statement(
@@ -136,9 +141,17 @@ impl<'ast> Run<'ast, '_> {
         body: &[Code<'ast>],
         locals: &mut Locals<'ast>,
     ) -> Evaluation<'ast, Value<'ast>> {
+        // A call cycle (self- or mutually recursive handlers) never reaches the statement
+        // budget or the loop cap; each level also clones its symbolic arguments, so even a
+        // million-statement budget cannot end it. Fail the call structurally instead.
+        if self.depth >= MAXIMUM_CALL_DEPTH {
+            return Err(Stop::unsupported("a call past the depth limit"));
+        }
+        self.depth += 1;
         self.frames.push(frame);
         let flow = compile::run_all(body, self, locals);
         self.frames.pop();
+        self.depth -= 1;
         flow.map(returned)
     }
 

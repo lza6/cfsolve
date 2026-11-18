@@ -80,6 +80,9 @@ pub(crate) struct Run<'ast, 'session> {
     facts: Vec<(Term, Value<'ast>)>,
     journal: Journal<'ast>,
     pub(super) spare: Spare<'ast>,
+    /// Frames entered since this run started. Bounded by [`MAXIMUM_CALL_DEPTH`] in
+    /// [`Run::body`](super::evaluate::Run::body); handler and constructor runs start at one.
+    pub(super) depth: usize,
     /// Whether the run shares [`Frozen`] session objects instead of copying them.
     pub(super) sharing: bool,
     /// Whether the run wrote to a shared object, thawing it. Its results are discarded.
@@ -316,6 +319,7 @@ impl<'ast, 'session> Run<'ast, 'session> {
             facts: Vec::new(),
             journal: Journal::default(),
             spare: Spare::default(),
+            depth: 0,
             sharing: false,
             thawed: false,
         }
@@ -330,6 +334,7 @@ impl<'ast, 'session> Run<'ast, 'session> {
         }
         run.start_at(invocation.pc, invocation.key);
         run.registers.extend(invocation.known.iter().cloned());
+        run.depth = 1;
         run
     }
 
@@ -362,6 +367,7 @@ impl<'ast, 'session> Run<'ast, 'session> {
     pub(in crate::vm) fn method(session: &'session Session<'ast>) -> Self {
         let mut run = Self::new(session, &[], Vec::new(), None);
         run.frames.push(Frame::new(Value::Machine));
+        run.depth = 1;
         run
     }
 
@@ -372,6 +378,7 @@ impl<'ast, 'session> Run<'ast, 'session> {
     ) -> Self {
         let mut run = Self::new(session, program, Vec::new(), Some(Copies::default()));
         run.frames.push(Frame::new(Value::Machine));
+        run.depth = 1;
         run
     }
 

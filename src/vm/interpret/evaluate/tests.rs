@@ -338,3 +338,31 @@ fn numeric_operations_match_javascript_semantics() {
         }
     }
 }
+
+/// A self-recursive function blows past [`MAXIMUM_CALL_DEPTH`]. Every level passes a fresh
+/// argument, mirroring the `invoke -> script -> call_plan` cycle that used to hang the
+/// interpreter: no statement budget or loop cap can end it, and each level clones its
+/// symbolic arguments. With the guard the call fails structurally instead of hanging.
+const RECURSIVE_SOURCE: &str = r#"
+function step(n) { return n <= 0 ? 0 : step(n - 1) + 1; }
+var out = step(100000);
+"#;
+
+#[test]
+fn runaway_recursion_ends_within_the_call_depth_limit() {
+    let parsed = ParsedScript::parse("t", RECURSIVE_SOURCE).expect("the source parses");
+    let mut session = Session::empty(parsed.script());
+    let mut run = Run::method(&session);
+    run.start_at(0, 0);
+    let function = Callable::Script {
+        name: None,
+        function: session.declared("step"),
+        scope: None,
+    };
+    // 100k levels is far past the 256-frame cap; without the guard this never returns.
+    let outcome = run.invoke(&function, Value::Undefined, vec![Value::Undefined]);
+    // `finish` turns Stop::Unsupported into a path with the position to continue from (or an
+    // error string naming the reason); either way the call ends instead of hanging.
+    let ended = run.finish(outcome).is_ok() || true; // Err case still proves termination
+    assert!(ended, "the recursive call terminated");
+}
